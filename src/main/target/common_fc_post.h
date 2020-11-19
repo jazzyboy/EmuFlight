@@ -179,6 +179,10 @@
 #define USE_GPS
 #endif
 
+#if !(defined(USE_BARO) || defined(USE_GPS))
+#undef USE_VARIO
+#endif
+
 // CX10 is a special case of SPI RX which requires XN297
 #if defined(USE_RX_CX10)
 #define USE_RX_XN297

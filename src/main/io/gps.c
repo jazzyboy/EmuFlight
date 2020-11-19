@@ -77,10 +77,16 @@ static char *gpsPacketLogChar = gpsPacketLog;
 int32_t GPS_home[2];
 uint16_t GPS_distanceToHome;        // distance to home point in meters
 int16_t GPS_directionToHome;        // direction to home or hol point in degrees
-float dTnav;             // Delta Time in milliseconds for navigation computations, updated with every good GPS read
+uint32_t GPS_distanceFlownInCm;     // distance flown since armed in centimeters
+int16_t GPS_verticalSpeedInCmS;     // vertical speed in cm/s
+float dTnav;                        // Delta Time in milliseconds for navigation computations, updated with every good GPS read
 int16_t actual_speed[2] = { 0, 0 };
 int16_t nav_takeoff_bearing;
 navigationMode_e nav_mode = NAV_MODE_NONE;    // Navigation mode
+
+#define GPS_DISTANCE_FLOWN_MIN_SPEED_THRESHOLD_CM_S 15 // 5.4Km/h 3.35mph
+
+gpsSolutionData_t gpsSol;
 
 // moving average filter variables
 #define GPS_FILTERING              1    // add a 5 element moving average filter to GPS coordinates, helps eliminate gps noise but adds latency
@@ -240,7 +246,10 @@ PG_RESET_TEMPLATE(gpsConfig_t, gpsConfig,
                   .sbasMode = SBAS_AUTO,
                   .autoConfig = GPS_AUTOCONFIG_ON,
                   .autoBaud = GPS_AUTOBAUD_OFF,
-                  .gps_ublox_use_galileo = false
+                  .gps_ublox_use_galileo = false,
+                  .gps_set_home_point_once = false,
+                  .gps_use_3d_speed = false,
+                  .sbas_integrity = false
                  );
 
 static void shiftPacketLog(void) {
@@ -1173,6 +1182,42 @@ void GPS_calc_longitude_scaling(int32_t lat) {
     GPS_scaleLonDown = cos_approx(rads);
 }
 
+////////////////////////////////////////////////////////////////////////////////////
+// Calculate the distance flown and vertical speed from gps position data
+//
+static void GPS_calculateDistanceFlownVerticalSpeed(bool initialize)
+{
+    static int32_t lastCoord[2] = { 0, 0 };
+    static int32_t lastAlt;
+    static int32_t lastMillis;
+
+    int currentMillis = millis();
+
+    if (initialize) {
+        GPS_distanceFlownInCm = 0;
+        GPS_verticalSpeedInCmS = 0;
+    } else {
+        if (STATE(GPS_FIX_HOME) && ARMING_FLAG(ARMED)) {
+            uint16_t speed = gpsConfig()->gps_use_3d_speed ? gpsSol.speed3d : gpsSol.groundSpeed;
+            // Only add up movement when speed is faster than minimum threshold
+            if (speed > GPS_DISTANCE_FLOWN_MIN_SPEED_THRESHOLD_CM_S) {
+                uint32_t dist;
+                int32_t dir;
+                GPS_distance_cm_bearing(&gpsSol.llh.lat, &gpsSol.llh.lon, &lastCoord[LAT], &lastCoord[LON], &dist, &dir);
+                if (gpsConfig()->gps_use_3d_speed) {
+                    dist = sqrtf(powf(gpsSol.llh.alt - lastAlt, 2.0f) + powf(dist, 2.0f));
+                }
+                GPS_distanceFlownInCm += dist;
+            }
+        }
+        GPS_verticalSpeedInCmS = (gpsSol.llh.alt - lastAlt) * 1000 / (currentMillis - lastMillis);
+        GPS_verticalSpeedInCmS = constrain(GPS_verticalSpeedInCmS, -1500, 1500);
+    }
+    lastCoord[LON] = gpsSol.llh.lon;
+    lastCoord[LAT] = gpsSol.llh.lat;
+    lastAlt = gpsSol.llh.alt;
+    lastMillis = currentMillis;
+}
 
 void GPS_reset_home_position(void) {
     if (STATE(GPS_FIX) && gpsSol.numSat >= 5) {
@@ -1182,6 +1227,7 @@ void GPS_reset_home_position(void) {
         // Set ground altitude
         ENABLE_STATE(GPS_FIX_HOME);
     }
+    GPS_calculateDistanceFlownVerticalSpeed(true); //Initialize
 }
 
 ////////////////////////////////////////////////////////////////////////////////////

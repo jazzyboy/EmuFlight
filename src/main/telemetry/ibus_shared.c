@@ -31,6 +31,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <limits.h>
 
 #include "platform.h"
 #include "telemetry/telemetry.h"
@@ -398,12 +399,14 @@ static void setValue(uint8_t* bufferPtr, uint8_t sensorType, uint8_t length) {
     case IBUS_SENSOR_TYPE_CMP_HEAD:
         value.uint16 = DECIDEGREES_TO_DEGREES(attitude.values.yaw);
         break;
+#ifdef USE_VARIO
     case IBUS_SENSOR_TYPE_VERTICAL_SPEED:
     case IBUS_SENSOR_TYPE_CLIMB_RATE:
         if(sensors(SENSOR_SONAR) || sensors(SENSOR_BARO)) {
-            value.int16 = (int16_t)getEstimatedVario();
+            value.int16 = (int16_t) constrain(getEstimatedVario(), SHRT_MIN, SHRT_MAX);        //value.int16 = (int16_t)getEstimatedVario();
         }
         break;
+#endif
     case IBUS_SENSOR_TYPE_ALT:
     case IBUS_SENSOR_TYPE_ALT_MAX:
         value.int32 = baro.BaroAlt;
